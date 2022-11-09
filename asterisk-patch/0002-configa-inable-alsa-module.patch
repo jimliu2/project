@@ -1,0 +1,28 @@
+From 61c6d725ba70ac0a8177ecfaf24c4a5487a5d312 Mon Sep 17 00:00:00 2001
+From: jimliu2 <t90615@gmail.com>
+Date: Fri, 21 Oct 2022 08:20:59 -0700
+Subject: [PATCH 2/5] configa: inable alsa module
+
+---
+ configs/samples/modules.conf.sample | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/configs/samples/modules.conf.sample b/configs/samples/modules.conf.sample
+index 56ffe27eee..91144c84e1 100644
+--- a/configs/samples/modules.conf.sample
++++ b/configs/samples/modules.conf.sample
+@@ -34,9 +34,9 @@ autoload=yes
+ ; Load one of: chan_oss, alsa, or console (portaudio).
+ ; By default, load chan_oss only (automatically).
+ ;
+-noload = chan_alsa.so
++;noload = chan_alsa.so
+ noload = chan_console.so
+-;noload = chan_oss.so
++noload = chan_oss.so
+ ;
+ ; Do not load res_hep and kin unless you are using HEP monitoring
+ ; <http://sipcapture.org> in your network.
+-- 
+2.17.1
+

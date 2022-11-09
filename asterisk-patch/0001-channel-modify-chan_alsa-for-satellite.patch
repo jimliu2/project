@@ -1,0 +1,384 @@
+From f1dea473de7b783c1ae4f7cea1f266b349276358 Mon Sep 17 00:00:00 2001
+From: jimliu2 <t90615@gmail.com>
+Date: Fri, 21 Oct 2022 08:14:04 -0700
+Subject: [PATCH 1/5] channel: modify chan_alsa for satellite
+
+add outgoing function for sip callout to mobile phone
+add do_monitor_phone for monitor satellite uart status and call to sip
+---
+ channels/chan_alsa.c | 314 +++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 314 insertions(+)
+
+diff --git a/channels/chan_alsa.c b/channels/chan_alsa.c
+index 3bfa5c924d..d51e736268 100644
+--- a/channels/chan_alsa.c
++++ b/channels/chan_alsa.c
+@@ -48,6 +48,11 @@
+ #include <fcntl.h>
+ #include <sys/ioctl.h>
+ #include <sys/time.h>
++#include <string.h>
++#include <termios.h>
++#include <unistd.h>
++#include <stdio.h>
++#include <stdlib.h>
+ 
+ #define ALSA_PCM_NEW_HW_PARAMS_API
+ #define ALSA_PCM_NEW_SW_PARAMS_API
+@@ -111,6 +116,8 @@ static int silencesuppression = 0;
+ static int silencethreshold = 1000;
+ 
+ AST_MUTEX_DEFINE_STATIC(alsalock);
++AST_MUTEX_DEFINE_STATIC(ttylock);
++AST_MUTEX_DEFINE_STATIC(callflaglock);
+ 
+ static const char tdesc[] = "ALSA Console Channel Driver";
+ static const char config[] = "alsa.conf";
+@@ -157,6 +164,12 @@ static int alsa_write(struct ast_channel *chan, struct ast_frame *f);
+ static int alsa_indicate(struct ast_channel *chan, int cond, const void *data, size_t datalen);
+ static int alsa_fixup(struct ast_channel *oldchan, struct ast_channel *newchan);
+ 
++static int call_flag=0;
++int outgoing_call( const char *dest, int timeout);
++int set_interface_attribs( int fd, int speed, int parity );
++
++static void grab_owner(void);
++
+ static struct ast_channel_tech alsa_tech = {
+ 	.type = "Console",
+ 	.description = tdesc,
+@@ -278,6 +291,142 @@ static snd_pcm_t *alsa_card_init(char *dev, snd_pcm_stream_t stream)
+ 	return handle;
+ }
+ 
++#define PORT_DEVNAME "/dev/ttyS3"
++#define PORT_BAUDRATE 230400
++//stty -F /dev/ttyS3 icanon
++
++int set_interface_attribs( int fd, int speed, int parity )
++{
++  struct termios tty;
++  if ( tcgetattr ( fd, &tty ) != 0 ) {
++    printf( "error %d from tcgetattr", errno );
++    return -1;
++  }
++
++  cfsetospeed ( &tty, speed );
++  cfsetispeed ( &tty, speed );
++
++  tty.c_cflag = ( tty.c_cflag & ~CSIZE ) | CS8;     // 8-bit chars
++  // disable IGNBRK for mismatched speed tests; otherwise receive break
++  // as \000 chars
++  tty.c_iflag &= ~IGNBRK;         // disable break processing
++  tty.c_lflag = 0;                // no signaling chars, no echo,
++  // no canonical processing
++  tty.c_oflag = 0;                // no remapping, no delays
++  tty.c_cc[VMIN]  = 0;            // read doesn't block
++  tty.c_cc[VTIME] = 5;            // 0.5 seconds read timeout
++
++  tty.c_iflag &= ~( IXON | IXOFF | IXANY ); // shut off xon/xoff ctrl
++
++  tty.c_cflag |= ( CLOCAL | CREAD );// ignore modem controls,
++  // enable reading
++  tty.c_cflag &= ~( PARENB | PARODD );      // no parity
++  tty.c_cflag |= parity;
++  tty.c_cflag &= ~CSTOPB;  // stop bit = 1
++  tty.c_cflag &= ~CRTSCTS;  // disable HARDWARE flow control
++
++  if ( tcsetattr ( fd, TCSANOW, &tty ) != 0 ) {
++    printf( "error %d from tcsetattr", errno );
++    return -1;
++  }
++  return 0;
++}
++
++/*!
++ * \brief Check if the module is unloading.
++ * \retval 0 not unloading
++ * \retval 1 unloading
++ */
++
++static void* do_monitor_phone (void)
++{
++	int flag;
++
++	while (1)
++	{
++		ast_mutex_lock (&ttylock);
++		int serial_fd = open( PORT_DEVNAME, O_RDONLY | O_NOCTTY );
++		if ( serial_fd < 0 ) {
++			ast_verbose( "error %d opening %s: %s", errno, PORT_DEVNAME, strerror( errno ) );
++			ast_mutex_unlock (&ttylock);
++			return -1;
++		}
++		flag = fcntl(serial_fd, F_GETFD);
++		set_interface_attribs( serial_fd, PORT_BAUDRATE, 0 );
++
++		char buf [200]={0};
++		int n = read(serial_fd, buf, sizeof(buf));
++		close( serial_fd );
++		ast_mutex_unlock (&ttylock);
++
++		if(n>1){
++			ast_verbose("buf-monitor:(%d)%s\n",n, buf);
++		}else
++			continue;
++
++		char *pch;
++		pch = strstr(buf, "caller_id");
++		if (call_flag==0 && pch != NULL) {
++			ast_verbose("found-monitor: %s\n", pch);
++
++			char *p;
++			char* rest = pch+12;
++			p = strtok_r(rest, "\"", &rest);
++			ast_verbose("-----caller-monitor:%s\n",p);
++			char input [300]={0};
++			int length;
++			length = snprintf ( input, 300, "Channel: PJSIP/7002\nCallerID: %s\n\nContext: from-internal\nExtension: 300\nPriority: 1\n", p);
++			ast_verbose("-----outgoing file:%s\n",input);
++
++			int fd1=open("/var/spool/asterisk/tmp/test.call",O_CREAT | O_WRONLY | O_TRUNC,S_IRUSR);//644
++			if(fd1!=-1){
++				ast_verbose("file is created.\n");
++			}
++
++			write(fd1,input,length);
++			ast_verbose("..writing(len:%d)..\n",length);
++
++			close(fd1);
++			rename("/var/spool/asterisk/tmp/test.call", "/var/spool/asterisk/outgoing/test.call");
++			ast_mutex_lock(&callflaglock);
++			call_flag=1;
++			ast_mutex_unlock(&callflaglock);
++		}
++		pch = NULL;
++		pch = strstr(buf, "idle");
++		if (call_flag==1 && pch != NULL) {//
++			ast_verbose("found-monitor: %s\n", pch);
++
++			grab_owner();
++			if (alsa.owner) {
++				ast_queue_hangup_with_cause(alsa.owner, AST_CAUSE_NORMAL_CLEARING);
++				ast_channel_unlock(alsa.owner);
++			}
++
++			unlink("/var/spool/asterisk/outgoing/test.call");
++			ast_mutex_lock(&callflaglock);
++			call_flag=0;
++			ast_mutex_unlock(&callflaglock);
++		}
++	}
++
++	/* TODO: wakeup discovery thread after some delay */
++	return NULL;
++}
++
++pthread_t		monitor_thread = AST_PTHREADT_NULL;
++static inline int start_monitor(void)// (struct pvt * pvt)
++{
++	ast_verbose (" start_monitor ....call ast_pthread_create_background\n");
++	if (ast_pthread_create_background (&monitor_thread, NULL, do_monitor_phone, NULL)<0)//pvt) < 0)
++	{
++		monitor_thread = AST_PTHREADT_NULL;
++		return 0;
++	}
++
++	return 1;
++}
++
+ static int soundcard_init(void)
+ {
+ 	if (!noaudiocapture) {
+@@ -295,6 +444,14 @@ static int soundcard_init(void)
+ 		return -1;
+ 	}
+ 
++	ast_mutex_init(&ttylock);
++	ast_mutex_init(&callflaglock);
++	unlink("/var/spool/asterisk/outgoing/test.call");
++	if (start_monitor())
++	{
++		ast_verbose ("....connected, initializing...\n");
++	}
++
+ 	return writedev;
+ }
+ 
+@@ -324,9 +481,148 @@ static void grab_owner(void)
+ 	}
+ }
+ 
++
++int outgoing_call( const char *dest, int timeout)
++{
++	if (strncmp(dest, "satellite",9) == 0) {
++		int serial_fd = open( PORT_DEVNAME, O_RDWR | O_NOCTTY);
++		if ( serial_fd < 0 ) {
++			ast_verbose( "error %d opening %s: %s", errno, PORT_DEVNAME, strerror( errno ) );
++			return -1;
++		}
++		int flag = fcntl(serial_fd, F_GETFD);
++		set_interface_attribs( serial_fd, PORT_BAUDRATE, 0 );
++
++		char input [200]={0};
++		int length;
++
++		length = snprintf ( input, 200, "PUT callAgent {\"channel\":\"line1\",\"user_action\":\"answer\"}\r");
++		write( serial_fd, input, length );
++		write( serial_fd, input, length );
++		close( serial_fd );
++
++		return 0;
++	}
++
++	timeout=60;
++	while (timeout>0)
++	{
++		int serial_fd = open( PORT_DEVNAME, O_RDONLY | O_NOCTTY );
++		if ( serial_fd < 0 ) {
++			ast_verbose( "error %d opening %s: %s", errno, PORT_DEVNAME, strerror( errno ) );
++			return -1;
++		}
++		int flag = fcntl(serial_fd, F_GETFD);
++		set_interface_attribs( serial_fd, PORT_BAUDRATE, 0 );
++
++		char buf [200]={0};
++		int n = read(serial_fd, buf, sizeof buf);
++		close( serial_fd );
++
++		if(n>1){
++			ast_verbose("buf outgoing_call:(%d)%s\n",n, buf);
++			timeout--;
++		}
++
++		char *pch;
++		pch = strstr(buf, "signal_bars");
++		if (pch != NULL) {
++			ast_verbose("found: %s\n", pch);
++			//signal_bars":
++
++			char *p;
++			char* rest = pch+13;
++
++			p = strtok_r(rest, ",", &rest);
++			int signal = atoi(p);
++			ast_verbose("-----(p:%s)signal_bars:%d timeout(%d)\n",p,signal,timeout);
++			if(signal>1)
++				break;
++		}
++
++	}
++
++	if(timeout<=0){
++		return -1;
++	}
++
++	//ast_mutex_lock (&ttylock);
++	int serial_fd = open( PORT_DEVNAME, O_RDWR | O_NOCTTY);
++	if ( serial_fd < 0 ) {
++		ast_verbose( "error %d opening %s: %s", errno, PORT_DEVNAME, strerror( errno ) );
++		return -1;
++	}
++	int flag = fcntl(serial_fd, F_GETFD);
++	set_interface_attribs( serial_fd, PORT_BAUDRATE, 0 );
++
++
++	char input [200]={0};
++	int length = snprintf ( input, 200, "PUT callAgent {\"channel\":\"line1\",\"dial_string\":\"%s\",\"user_action\":\"dial\"}\r", dest);
++	ast_verbose(" << write to tty is (%d):%s >> \n",length,input);
++	write( serial_fd, input, length );
++
++	close( serial_fd );
++
++	timeout=120;
++
++	while (timeout>0)
++	{
++		int serial_fd = open( PORT_DEVNAME, O_RDONLY | O_NOCTTY );
++		if ( serial_fd < 0 ) {
++			ast_verbose( "error %d opening %s: %s", errno, PORT_DEVNAME, strerror( errno ) );
++			return -1;
++		}
++		int flag = fcntl(serial_fd, F_GETFD);
++		set_interface_attribs( serial_fd, PORT_BAUDRATE, 0 );
++
++		char buf [200]={0};
++		int n = read(serial_fd, buf, sizeof(buf));
++		close( serial_fd );
++
++		if(n>1) {
++			timeout--;
++			ast_verbose("buf outgoing_call:(%d)%s\n",n, buf);
++		}
++
++		char *pch;
++		pch = strstr(buf, "remote_ringing");
++		if (pch != NULL) {
++			ast_verbose(" got remote_ringing: %s\n", pch);
++		}
++
++		char *pch2;
++		pch2 = strstr(buf, "connected");
++		if (pch2 != NULL) {
++			ast_verbose(" got connected: %s\n", pch2);
++
++			return 0;
++		}
++		char *pch3;
++		pch3 = strstr(buf, "idle");
++		if (pch3 != NULL) {
++			ast_verbose(" got idle: %s\n", pch3);
++			return -1;
++		}
++	}
++
++	if(timeout<=0){
++		return -1;
++	}
++
++	return 0;
++}
++
+ static int alsa_call(struct ast_channel *c, const char *dest, int timeout)
+ {
+ 	struct ast_frame f = { AST_FRAME_CONTROL };
++	ast_verbose(" << Medad:Call placed to '%s' on console >> \n", dest);
++
++	ast_mutex_lock (&ttylock);
++	int ret = outgoing_call(dest, timeout);
++	ast_mutex_unlock (&ttylock);
++
++	if(ret<0)
++		return 0;
+ 
+ 	ast_mutex_lock(&alsalock);
+ 	ast_verbose(" << Call placed to '%s' on console >> \n", dest);
+@@ -380,6 +676,24 @@ static int alsa_hangup(struct ast_channel *c)
+ 	ast_channel_tech_pvt_set(c, NULL);
+ 	alsa.owner = NULL;
+ 	ast_verbose(" << Hangup on console >> \n");
++
++	ast_mutex_lock(&ttylock);
++	int serial_fd = open( PORT_DEVNAME, O_RDWR | O_NOCTTY);
++	if ( serial_fd < 0 ) {
++		ast_verbose( "error %d opening %s: %s", errno, PORT_DEVNAME, strerror( errno ) );
++		return -1;
++	}
++	int flag = fcntl(serial_fd, F_GETFD);
++	set_interface_attribs( serial_fd, PORT_BAUDRATE, 0 );
++
++	char input [200]={0};
++	int length;
++
++	length = snprintf ( input, 200, "PUT callAgent {\"channel\":\"line1\",\"user_action\":\"terminate\"}\r");
++	write( serial_fd, input, length );
++	close( serial_fd );
++	ast_mutex_unlock(&ttylock);
++
+ 	ast_module_unref(ast_module_info->self);
+ 	hookstate = 0;
+ 	if (!noaudiocapture) {
+-- 
+2.17.1
+

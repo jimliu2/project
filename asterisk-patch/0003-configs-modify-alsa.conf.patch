@@ -1,0 +1,38 @@
+From fbc1656422af0945aae8424a2cf27cf88cb9104b Mon Sep 17 00:00:00 2001
+From: jimliu2 <t90615@gmail.com>
+Date: Fri, 21 Oct 2022 08:22:20 -0700
+Subject: [PATCH 3/5] configs: modify alsa.conf
+
+context is mapping to extension.conf
+in/out device is use 0,0 i2s channel
+---
+ configs/samples/alsa.conf.sample | 6 +++---
+ 1 file changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/configs/samples/alsa.conf.sample b/configs/samples/alsa.conf.sample
+index 3e617104d8..5c8926e4b4 100644
+--- a/configs/samples/alsa.conf.sample
++++ b/configs/samples/alsa.conf.sample
+@@ -10,7 +10,7 @@ autoanswer=yes
+ ;
+ ; Default context (is overridden with @context syntax)
+ ;
+-context=local
++context=from-internal
+ ;
+ ; Default extension to call
+ ;
+@@ -34,8 +34,8 @@ extension=s
+ ;silencethreshold = 1000
+ ;
+ ; To set which ALSA device to use, change this parameter
+-;input_device=hw:0,0
+-;output_device=hw:0,0
++input_device=plughw:0,0
++output_device=plughw:0,0
+ 
+ ;
+ ; Default mute state (can also be toggled via CLI)
+-- 
+2.17.1
+

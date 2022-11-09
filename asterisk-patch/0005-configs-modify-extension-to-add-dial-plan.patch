@@ -1,0 +1,44 @@
+From 11434d024e9fcca674d1d60add5b9c517a10f3c4 Mon Sep 17 00:00:00 2001
+From: jimliu2 <t90615@gmail.com>
+Date: Fri, 21 Oct 2022 08:33:49 -0700
+Subject: [PATCH 5/5] configs: modify extension to add dial plan
+
+---
+ configs/samples/extensions.conf.sample | 24 ++++++++++++++++++++++++
+ 1 file changed, 24 insertions(+)
+
+diff --git a/configs/samples/extensions.conf.sample b/configs/samples/extensions.conf.sample
+index cd26dc368a..205cdc8db1 100644
+--- a/configs/samples/extensions.conf.sample
++++ b/configs/samples/extensions.conf.sample
+@@ -862,3 +862,27 @@ exten => _X.,40000(ani),NoOp(ANI: ${EXTEN})
+ ; "core show functions" will list all dialplan functions
+ ; "core show function <COMMAND>" will show you more information about
+ ; one function. Remember that function names are UPPER CASE.
++
++[from-internal]
++
++exten => 7001,1,Dial(PJSIP/7001)
++; call  to 7001 from sip7002
++
++
++exten => 7002,1,Dial(PJSIP/7002)
++; call to 7002 from sip7001
++
++exten => _110.,1,Ringing()
++	same => n,Wait(5)
++	same => n,Answer()
++	same => n,Wait()
++	same => n,Playback(hello-world)
++	same => n,Hangup()
++
++;110 listen hello-world voice
++
++exten => 300,1,Dial(Console/satellite,30)
++
++exten => _8.,1,Dial(Console/${EXTEN:0},30)
++;used alsa function to call out 886912345678
++
+-- 
+2.17.1
+

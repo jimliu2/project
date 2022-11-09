@@ -1,0 +1,73 @@
+From 640ada000cc0d591f57ab3b6213a70cf4e7c20ad Mon Sep 17 00:00:00 2001
+From: jimliu2 <t90615@gmail.com>
+Date: Fri, 21 Oct 2022 08:24:49 -0700
+Subject: [PATCH 4/5] configs: modify pjsip.config
+
+add sip number 7001 and 7002
+---
+ configs/samples/pjsip.conf.sample | 45 ++++++++++++++++++++++++++++++-
+ 1 file changed, 44 insertions(+), 1 deletion(-)
+
+diff --git a/configs/samples/pjsip.conf.sample b/configs/samples/pjsip.conf.sample
+index a019708c39..3615d0de28 100644
+--- a/configs/samples/pjsip.conf.sample
++++ b/configs/samples/pjsip.conf.sample
+@@ -1107,7 +1107,7 @@
+ ;max_contacts=0 ; Maximum number of contacts that can bind to an AoR (default:
+                 ; "0")
+ ;minimum_expiration=60  ; Minimum keep alive time for an AoR (default: "60")
+-;remove_existing=no     ; Allow a registration to succeed by displacing any existing
++;remove_existing=yes     ; Allow a registration to succeed by displacing any existing
+                         ; contacts that now exceed the max_contacts count.  Any
+                         ; removed contacts are the next to expire.  The behaviour is
+                         ; beneficial when rewrite_contact is enabled and max_contacts
+@@ -1562,3 +1562,46 @@
+ 
+ ;mailbox_state_filter=     ; Optional regular expression used to filter what
+                            ; mailboxes we accept events for.
++
++[transport-udp]
++type=transport
++protocol=udp
++bind=0.0.0.0
++
++[7001]
++type=endpoint
++context=from-internal
++disallow=all
++allow=ulaw
++auth=7001
++aors=7001
++
++[7001]
++type=auth
++auth_type=userpass
++password=7001
++username=7001
++
++[7001]
++type=aor
++remove_existing=yes
++max_contacts=1
++
++[7002]
++type=endpoint
++context=from-internal
++disallow=all
++allow=ulaw
++auth=7002
++aors=7002
++
++[7002]
++type=auth
++auth_type=userpass
++password=7002
++username=7002
++
++[7002]
++type=aor
++remove_existing=yes
++max_contacts=1
+-- 
+2.17.1
+
